@@ -9,18 +9,16 @@ from textblob import TextBlob
 from sklearn.preprocessing import LabelEncoder
 import spacy
 import os
-
-import os
-import spacy
-
-# Check if spaCy model is installed, otherwise download it
-spacy_model = "en_core_web_sm"
+# import spacy
 
 try:
-    nlp = spacy.load(spacy_model)
+    nlp = spacy.load("en_core_web_sm")
 except OSError:
-    os.system(f"python -m spacy download {spacy_model}")
-    nlp = spacy.load(spacy_model)
+    import os
+    os.system("python -m spacy download en_core_web_sm")
+    nlp = spacy.load("en_core_web_sm")
+
+
 
 
 # Load the trained model and scaler
