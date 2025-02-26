@@ -14,3 +14,5 @@ scikit-learn
 fastapi
 uvicorn
 pydantic
+spacy
+en-core-web-sm
