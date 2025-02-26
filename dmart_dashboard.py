@@ -10,22 +10,17 @@ from sklearn.preprocessing import LabelEncoder
 import spacy
 import os
 
-# try:
-#     nlp = spacy.load("en_core_web_sm")
-# except OSError:
-#     os.system("python -m spacy download en_core_web_sm")
-#     nlp = spacy.load("en_core_web_sm")
+import os
+import spacy
 
-# Load NLP model for query understanding
-# nlp = spacy.load("en_core_web_sm")
+# Check if spaCy model is installed, otherwise download it
+spacy_model = "en_core_web_sm"
 
-# import spacy
 try:
-    nlp = spacy.load("en_core_web_sm")
+    nlp = spacy.load(spacy_model)
 except OSError:
-    import subprocess
-    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-    nlp = spacy.load("en_core_web_sm")
+    os.system(f"python -m spacy download {spacy_model}")
+    nlp = spacy.load(spacy_model)
 
 
 # Load the trained model and scaler
