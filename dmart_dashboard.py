@@ -61,6 +61,24 @@ def checklist_for_aso():
         "Document findings and submit a report."
     ]
 
+
+
+def generate_plot(query):
+    df["created_at"] = pd.to_datetime(df["created_at"], errors='coerce')
+    
+    if "trend" in query or "monthly" in query:
+        df["month_year"] = df["created_at"].dt.to_period("M")
+        monthly_issues = df.groupby("month_year")["ticket_id"].count()
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        sns.lineplot(x=monthly_issues.index.astype(str), y=monthly_issues.values, ax=ax)
+        ax.set_title("Monthly Issue Trend")
+        ax.set_xlabel("Month-Year")
+        ax.set_ylabel("Number of Issues")
+        st.pyplot(fig)
+
+
+
 def process_query(query):
     query = query.lower()
     doc = nlp(query)
@@ -85,17 +103,46 @@ def process_query(query):
         else:
             response += "Please specify if you need highest issues, total issues, or trends for a location."
     
+    # if "category" in query:
+    #     categories = df["issue_type"].dropna().unique()
+    #     response += f"Total unique issue categories: {len(categories)}\nCategories: {', '.join(map(str, categories))}\n"
+
     if "category" in query:
-        categories = df["issue_type"].dropna().unique()
-        response += f"Total unique issue categories: {len(categories)}\nCategories: {', '.join(map(str, categories))}\n"
+        category_counts = df.groupby("issue_type")["ticket_id"].count().to_dict()
+        response += "Category-wise ticket count:\n" + "\n".join([f"{k}: {v}" for k, v in category_counts.items()])
+    
     
     if "store" in query:
         store_counts = df["Store"].value_counts()
         response += f"Top store with most issues: {store_counts.idxmax()} ({store_counts.max()} issues)\n"
     
-    if "open" in query:
-        open_tickets = df[df["status"].str.lower() == "open"]
-        response += f"Open tickets: {len(open_tickets)}\n"
+    # if "open" in query:
+    #     open_tickets = df[df["status"].str.lower() == "open"]
+    #     response += f"Open tickets: {len(open_tickets)}\n"
+
+
+    if "open" in query and "category" in query:
+        open_category_counts = df[df["status"].str.lower() == "open"].groupby("issue_type")["ticket_id"].count().to_dict()
+        response += "Open tickets by category:\n" + "\n".join([f"{k}: {v}" for k, v in open_category_counts.items()])
+    
+    if "checklist" in query and "aso" in query:
+     checklist = [
+        "Check all reported issues from the store log.",
+        "Inspect hardware and software systems.",
+        "Ensure proper connectivity and power backup.",
+        "Conduct training for store staff on issue resolution.",
+        "Verify previous unresolved issues and take necessary actions.",
+        "Document findings and submit a report."
+        ]
+     response += "Checklist for ASO at store:\n" + "\n".join([f"- {task}" for task in checklist])
+
+
+    if "aso" in query and "city" in query:
+     df["issues_per_aso"] = df["ticket_id"].groupby(df["City"]).transform("count") // 10  # Assuming 1 ASO handles 10 issues
+     city_aso_requirements = df.groupby("City")["issues_per_aso"].max().to_dict()
+     response += "Estimated ASOs required per city:\n" + "\n".join([f"{k}: {v} ASOs" for k, v in city_aso_requirements.items()])
+
+
     
     if "resolved" in query:
         resolved_tickets = df[df["status"].str.lower() == "resolved"]
