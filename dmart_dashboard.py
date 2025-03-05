@@ -7,19 +7,9 @@ import re
 import spacy
 from textblob import TextBlob
 from sklearn.preprocessing import LabelEncoder
-import spacy
-import os
-# import spacy
 
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    import os
-    os.system("python -m spacy download en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
-
-
-
+# Load NLP model for query understanding
+nlp = spacy.load("en_core_web_sm")
 
 # Load the trained model and scaler
 @st.cache_resource
@@ -42,139 +32,88 @@ model, scaler = load_model()
 df = load_data()
 
 st.title("🛒 D-Mart Operations Chatbot")
-st.write("Ask anything about D-Mart issues, trends, categories, predictions, or analysis!")
+st.write("Ask anything about D-Mart issues, terminals, trends, categories, predictions, or analysis!")
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-def predict_issues(store_id):
-    store_data = df[df["Store"] == store_id].drop(columns=["ticket_id"], errors="ignore").iloc[:1]
-    if store_data.empty:
-        return "Store ID not found in dataset!"
-    store_data = store_data.apply(pd.to_numeric, errors='coerce')
-    store_data.fillna(store_data.median(), inplace=True)
-    predicted_issues = model.predict(scaler.transform(store_data))[0]
-    return f"Predicted number of issues for Store {store_id}: {int(predicted_issues)}"
 
-def calculate_aso_requirements():
-    df["issues_per_aso"] = df["ticket_id"].groupby(df["City"]).transform("count") // 10  # Assuming each ASO handles 10 issues
-    city_aso_requirements = df.groupby("City")["issues_per_aso"].max().to_dict()
-    return city_aso_requirements
+def get_active_terminals(df_filtered):
+    """
+    Returns the correct count of active terminals.
+    Active terminal = NOT in churned list or still has transactions.
+    """
+    print(f"Total Terminals in Dataset: {df_filtered['cf_utid'].nunique()}")
 
-def checklist_for_aso():
-    return [
-        "Check all reported issues from the store log.",
-        "Inspect hardware and software systems.",
-        "Ensure proper connectivity and power backup.",
-        "Conduct training for store staff on issue resolution.",
-        "Verify previous unresolved issues and take necessary actions.",
-        "Document findings and submit a report."
-    ]
+    # Identifying churned terminals
+    churned_terminals = df_filtered[
+        (df_filtered["issue_type"].str.lower() == "Churn Request") & 
+        (df_filtered["status"].str.lower() == "closed")
+    ]["cf_utid"].unique()
 
+    print(f"Total Churned Terminals: {len(churned_terminals)}")
 
+    # Active terminals = Exclude churned ones
+    active_terminals = df_filtered[~df_filtered["cf_utid"].isin(churned_terminals)]["cf_utid"].nunique()
 
-def generate_plot(query):
-    df["created_at"] = pd.to_datetime(df["created_at"], errors='coerce')
-    
-    if "trend" in query or "monthly" in query:
-        df["month_year"] = df["created_at"].dt.to_period("M")
-        monthly_issues = df.groupby("month_year")["ticket_id"].count()
-
-        fig, ax = plt.subplots(figsize=(10, 5))
-        sns.lineplot(x=monthly_issues.index.astype(str), y=monthly_issues.values, ax=ax)
-        ax.set_title("Monthly Issue Trend")
-        ax.set_xlabel("Month-Year")
-        ax.set_ylabel("Number of Issues")
-        st.pyplot(fig)
-
+    print(f"Active Terminals (Corrected): {active_terminals}")
+    return active_terminals
 
 
 def process_query(query):
     query = query.lower()
     doc = nlp(query)
-    keywords = [token.text for token in doc if token.is_alpha]
     response = ""
-    
-    if "aso" in query and "city" in query:
-        city_aso_requirements = calculate_aso_requirements()
-        response += "Estimated ASOs required per city:\n" + "\n".join([f"{k}: {v} ASOs" for k, v in city_aso_requirements.items()])
-    
-    if "checklist" in query and "aso" in query:
-        checklist = checklist_for_aso()
-        response += "Checklist for ASO at store:\n" + "\n".join([f"- {task}" for task in checklist])
-    
-    if "location" in query or "city" in query or "state" in query:
-        if "highest" in query or "most" in query:
-            top_location = df.groupby("City")["ticket_id"].count().idxmax()
-            response += f"City with the highest number of issues: {top_location}\n"
-        elif "total" in query:
-            location_counts = df.groupby("City")["ticket_id"].count().to_dict()
-            response += "Total issues per city:\n" + "\n".join([f"{k}: {v}" for k, v in location_counts.items()])
-        else:
-            response += "Please specify if you need highest issues, total issues, or trends for a location."
-    
-    # if "category" in query:
-    #     categories = df["issue_type"].dropna().unique()
-    #     response += f"Total unique issue categories: {len(categories)}\nCategories: {', '.join(map(str, categories))}\n"
 
-    if "category" in query:
-        category_counts = df.groupby("issue_type")["ticket_id"].count().to_dict()
-        response += "Category-wise ticket count:\n" + "\n".join([f"{k}: {v}" for k, v in category_counts.items()])
+    # **Step 1: Extract Date (Month-Year)**
+    date_match = re.search(r"(january|february|march|april|may|june|july|august|september|october|november|december) \d{4}", query)
+    month_year = date_match.group() if date_match else df["created_at"].max().strftime("%B %Y")
+
+    # **Step 2: Remove Duplicates Before Processing**
+    df.drop_duplicates(subset=["cf_utid"], keep="last", inplace=True)
+
+    # **Step 3: Filter Data for Correct Month-Year**
+    df_filtered = df[df["created_at"].dt.strftime("%B %Y").str.lower() == month_year.lower()]
     
-    
+    # **DEBUG: Print Data Filtering Results**
+    print(f"📌 Query Month-Year: {month_year}")
+    print(f"📌 Total Rows in df_filtered (after duplicates removed): {len(df_filtered)}")
+
+    # ✅ **Terminal Queries**
+    if "terminal" in query:
+        # **Step 4: Identify Churned Terminals**
+        churned_terminals = df_filtered[
+            (df_filtered["issue_type"].str.lower() == "churn utid") &
+            (df_filtered["status"].str.lower() == "closed")
+        ]["cf_utid"].unique()
+
+        # **Step 5: Identify Active Terminals**
+        total_terminals = df_filtered["cf_utid"].nunique()
+        active_terminals = total_terminals - len(churned_terminals)
+
+        # **DEBUG: Print Terminal Counts**
+        # print(f"📌 Total Terminals in Dataset: {df['cf_utid'].nunique()}")
+        # print(f"📌 Total Churned Terminals: {len(churned_terminals)}")
+        # print(f"📌 Active Terminals: {active_terminals}")
+
+        response += f"✅ Active terminals as of {month_year}: {active_terminals}\n"
+
+    # ✅ **Store Queries**
     if "store" in query:
-        store_counts = df["Store"].value_counts()
-        response += f"Top store with most issues: {store_counts.idxmax()} ({store_counts.max()} issues)\n"
-    
-    # if "open" in query:
-    #     open_tickets = df[df["status"].str.lower() == "open"]
-    #     response += f"Open tickets: {len(open_tickets)}\n"
+        store_churn_status = df_filtered[df_filtered["cf_utid"].isin(churned_terminals)].groupby("Store")["cf_utid"].nunique()
+        active_stores = df_filtered[~df_filtered["Store"].isin(store_churn_status.index)]["Store"].nunique()
 
+        # **DEBUG: Print Store Counts**
+        print(f"📌 Active Stores: {active_stores}")
 
-    if "open" in query and "category" in query:
-        open_category_counts = df[df["status"].str.lower() == "open"].groupby("issue_type")["ticket_id"].count().to_dict()
-        response += "Open tickets by category:\n" + "\n".join([f"{k}: {v}" for k, v in open_category_counts.items()])
-    
-    if "checklist" in query and "aso" in query:
-     checklist = [
-        "Check all reported issues from the store log.",
-        "Inspect hardware and software systems.",
-        "Ensure proper connectivity and power backup.",
-        "Conduct training for store staff on issue resolution.",
-        "Verify previous unresolved issues and take necessary actions.",
-        "Document findings and submit a report."
-        ]
-     response += "Checklist for ASO at store:\n" + "\n".join([f"- {task}" for task in checklist])
+        response += f"🏬 Active stores as of {month_year}: {active_stores}\n"
 
-
-    if "aso" in query and "city" in query:
-     df["issues_per_aso"] = df["ticket_id"].groupby(df["City"]).transform("count") // 10  # Assuming 1 ASO handles 10 issues
-     city_aso_requirements = df.groupby("City")["issues_per_aso"].max().to_dict()
-     response += "Estimated ASOs required per city:\n" + "\n".join([f"{k}: {v} ASOs" for k, v in city_aso_requirements.items()])
-
-
-    
-    if "resolved" in query:
-        resolved_tickets = df[df["status"].str.lower() == "resolved"]
-        response += f"Resolved tickets: {len(resolved_tickets)}\n"
-    
-    if "predict" in query:
-        store_id = ''.join(filter(str.isdigit, query))
-        if store_id:
-            response += predict_issues(int(store_id))
-        else:
-            response += "Please enter a valid store ID for prediction."
-    
-    if "trend" in query or "monthly" in query:
-        df["month_year"] = df["created_at"].dt.to_period("M")
-        monthly_issues = df.groupby("month_year")["ticket_id"].count()
-        response += "Generating trend analysis.\n"
-        generate_plot("trend")
-    
+    # ✅ **Final Check**
     if not response:
-        response = "Sorry, I couldn't understand your question. Try asking about D-Mart issues, categories, stores, locations, trends, or predictions!"
+        response = "❌ Sorry, I couldn't understand your question. Try asking about terminals, stores, transaction dates, trends, or predictions!"
     
     return response.strip()
+
 
 # Search Input for Queries
 user_query = st.text_input("🔍 Ask your question here:", "", key="user_input")
